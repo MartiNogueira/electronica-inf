@@ -1,0 +1,13 @@
+tecnologias que usamos...
+
+PARA EL BACK:
+
+FLASK -> Es un framework para construir API'S, sirve para manejar peticiones
+
+FLASK-CORS -> Libreria de Flask(extension) que sirve como puente entre el back y front, permite que se comunique sin
+errores entre el puerto de Flask y React. Habilita el CORS(Cross Origin Resource Sharing)
+
+PSYCOPG2-BINARY -> Permite que el back se conecte con la base de datos de postgresql y los guarda.
+
+
+
