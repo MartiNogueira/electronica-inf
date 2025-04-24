@@ -7,7 +7,7 @@ with open("patente.jpg", "rb") as f:
 
 # Enviar por MQTT
 client = mqtt.Client()
-client.connect("localhost", 1883, 60)
+client.connect("54.243.184.8", 1883, 60)
 client.publish("patentes/captura", image_base64)
 client.disconnect()
 

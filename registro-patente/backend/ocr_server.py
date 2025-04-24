@@ -27,7 +27,7 @@ def on_message(client, userdata, msg):
         print(f"❌ Error procesando imagen: {e}")
 
 # Config MQTT
-broker = "localhost"
+broker = "54.243.184.8"
 topic = "patentes/captura"
 
 client = mqtt.Client()
