@@ -8,7 +8,7 @@ ESP32_CAM_URL = "http://192.168.0.68/capture"  # Ya no se usa, solo decorativo
 DB_CONFIG = {
     "host": "172.31.25.254",   # ⚠️ Si estás ejecutando esto desde la instancia 'prueba'
     "user": "postgres",
-    "password": "",            # Poné la contraseña si tu user postgres tiene
+    "password": "postgres",            # Poné la contraseña si tu user postgres tiene
     "dbname": "accesscontrol",
     "port": 5432
 }
