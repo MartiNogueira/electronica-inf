@@ -15,7 +15,7 @@ IMAGE_NAME = "patente.jpeg"  # ⚠️ Cambiar si subís una imagen diferente
 DB_CONFIG = {
     "host": "172.31.25.254",
     "user": "postgres",
-    "password": "",  # ⚠️ Si tiene password, ponerlo
+    "password": "postgres",  # ⚠️ Si tiene password, ponerlo
     "dbname": "accesscontrol",
     "port": 5432
 }
