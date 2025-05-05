@@ -2,51 +2,61 @@ import requests
 import psycopg2
 import boto3
 from datetime import datetime
+import json
 
-# IP de tu ESP32-CAM
+# 📸 IP local de tu ESP32-CAM
 ESP32_CAM_URL = "http://192.168.0.68/capture"
 
-# Configuración AWS Rekognition
-rekognition = boto3.client("rekognition", region_name="us-east-1")
-S3_BUCKET = "esp32-captures"
-IMAGE_NAME = "patente.jpeg"  # ⚠️ Cambiar si subís una imagen diferente
-
-# Configuración base de datos
+# 🔐 Conexión a la base de datos
 DB_CONFIG = {
     "host": "172.31.25.254",
     "user": "postgres",
-    "password": "postgres",  # ⚠️ Si tiene password, ponerlo
+    "password": "postgres",  # Agregá tu contraseña si tenés
     "dbname": "accesscontrol",
     "port": 5432
 }
 
-def detect_license_plate():
+# AWS Rekognition config
+rekognition = boto3.client('rekognition', region_name='us-east-1')
+BUCKET_NAME = 'esp32-captures'
+IMAGE_NAME = 'patente.jpeg'  # Imagen cargada previamente a S3
+
+def detectar_patente_rekognition():
     try:
         response = rekognition.detect_text(
-            Image={"S3Object": {"Bucket": S3_BUCKET, "Name": IMAGE_NAME}}
+            Image={'S3Object': {'Bucket': BUCKET_NAME, 'Name': IMAGE_NAME}}
         )
-
-        for item in response['TextDetections']:
-            if item['Type'] == 'LINE' and ' ' in item['DetectedText'] and len(item['DetectedText']) >= 7:
-                patente = item['DetectedText'].replace(" ", "")
-                print("🔠 Patente detectada (rekognition):", patente)
-                return patente
-
-        print("🚫 No se detectó ninguna patente válida")
+        # Filtrar texto tipo LINE con más probabilidad de ser patente
+        posibles_lineas = [d for d in response['TextDetections'] if d['Type'] == 'LINE']
+        for linea in posibles_lineas:
+            texto = linea['DetectedText'].replace(" ", "")
+            if 6 <= len(texto) <= 8 and any(c.isdigit() for c in texto):
+                return texto
         return None
-
     except Exception as e:
         print("⚠️ Error en Rekognition:", e)
         return None
 
-def validar_patente(patente):
+def capture_and_validate():
     try:
+        print("📸 Simulando solicitud a ESP32-CAM...")
+        try:
+            requests.get(ESP32_CAM_URL, timeout=5)
+        except:
+            print("⚠️ Error al capturar imagen. Se sigue igual para pruebas")
+
+        patente = detectar_patente_rekognition()
+        if not patente:
+            print("🚫 No se detectó ninguna patente válida")
+            return False
+
+        print(f"🔠 Patente detectada (rekognition): {patente}")
+
+        # Validación contra la base
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-
         cur.execute("SELECT autorizado FROM vehiculos WHERE patente = %s", (patente,))
         result = cur.fetchone()
-
         cur.close()
         conn.close()
 
@@ -58,17 +68,8 @@ def validar_patente(patente):
             return False
 
     except Exception as e:
-        print("⚠️ Error de base de datos:", e)
+        print("⚠️ Error general:", e)
         return False
 
 if __name__ == "__main__":
-    print("📸 Simulando solicitud a ESP32-CAM...")
-    try:
-        requests.get(ESP32_CAM_URL, timeout=5)
-        print("✅ Imagen capturada (simulada)")
-    except:
-        print("⚠️ Error al capturar imagen. Se sigue igual para pruebas")
-
-    patente = detect_license_plate()
-    if patente:
-        validar_patente(patente)
+    capture_and_validate()
