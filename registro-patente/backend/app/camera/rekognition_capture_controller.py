@@ -3,12 +3,14 @@ import psycopg2
 import boto3
 import paho.mqtt.publish as publish
 from datetime import datetime
-import json
 
 # 📸 IP local de tu ESP32-CAM
 ESP32_CAM_URL = "http://192.168.0.68/capture"
+LOCAL_IMAGE_PATH = "/tmp/captura.jpg"
+BUCKET_NAME = "esp32-captures"
+S3_IMAGE_KEY = "captura.jpg"
 
-# 🔐 Conexión a la base de datos
+# 🔐 Configuración base de datos
 DB_CONFIG = {
     "host": "172.31.25.254",
     "user": "postgres",
@@ -17,20 +19,37 @@ DB_CONFIG = {
     "port": 5432
 }
 
-# AWS Rekognition config
-rekognition = boto3.client('rekognition', region_name='us-east-1')
-BUCKET_NAME = 'esp32-captures'
-IMAGE_NAME = 'patente.jpeg'
-
-# MQTT config
-MQTT_BROKER = "54.243.184.8"  # IP pública o privada del broker MQTT
+# MQTT broker
+MQTT_BROKER = "54.243.184.8"
 MQTT_TOPIC = "barrera/accion"
 
+# AWS clients
+rekognition = boto3.client("rekognition", region_name="us-east-1")
+s3 = boto3.client("s3")
+
+def capturar_y_subir_imagen():
+    try:
+        print("📸 Capturando imagen desde ESP32-CAM...")
+        response = requests.get(ESP32_CAM_URL, timeout=10)
+        if response.status_code == 200:
+            with open(LOCAL_IMAGE_PATH, "wb") as f:
+                f.write(response.content)
+            print("✅ Imagen guardada localmente")
+
+            s3.upload_file(LOCAL_IMAGE_PATH, BUCKET_NAME, S3_IMAGE_KEY)
+            print("☁️ Imagen subida a S3")
+            return True
+        else:
+            print("❌ Error al capturar imagen. Código:", response.status_code)
+            return False
+    except Exception as e:
+        print("⚠️ Error capturando/subiendo imagen:", e)
+        return False
 
 def detectar_patente_rekognition():
     try:
         response = rekognition.detect_text(
-            Image={'S3Object': {'Bucket': BUCKET_NAME, 'Name': IMAGE_NAME}}
+            Image={'S3Object': {'Bucket': BUCKET_NAME, 'Name': S3_IMAGE_KEY}}
         )
         posibles_lineas = [d for d in response['TextDetections'] if d['Type'] == 'LINE']
         for linea in posibles_lineas:
@@ -42,21 +61,8 @@ def detectar_patente_rekognition():
         print("⚠️ Error en Rekognition:", e)
         return None
 
-def capture_and_validate():
+def validar_patente(patente):
     try:
-        print("📸 Simulando solicitud a ESP32-CAM...")
-        try:
-            requests.get(ESP32_CAM_URL, timeout=5)
-        except:
-            print("⚠️ Error al capturar imagen. Se sigue igual para pruebas")
-
-        patente = detectar_patente_rekognition()
-        if not patente:
-            print("🚫 No se detectó ninguna patente válida")
-            return False
-
-        print(f"🔠 Patente detectada (rekognition): {patente}")
-
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
         cur.execute("SELECT autorizado FROM vehiculos WHERE patente = %s", (patente,))
@@ -72,10 +78,18 @@ def capture_and_validate():
         else:
             print("🚫 Patente NO autorizada → acceso denegado ❌")
             return False
-
     except Exception as e:
-        print("⚠️ Error general:", e)
+        print("⚠️ Error en la base de datos:", e)
         return False
 
+def ejecutar_flujo():
+    if capturar_y_subir_imagen():
+        patente = detectar_patente_rekognition()
+        if patente:
+            print(f"🔠 Patente detectada: {patente}")
+            validar_patente(patente)
+        else:
+            print("🚫 No se pudo detectar ninguna patente")
+
 if __name__ == "__main__":
-    capture_and_validate()
+    ejecutar_flujo()

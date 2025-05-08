@@ -1,40 +1,32 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from database import get_connection
+from flask import Flask, jsonify
+import subprocess
 
 app = Flask(__name__)
-CORS(app)  # Permite peticiones desde React
 
-@app.route('/registro-visita', methods=['POST'])
-def registro_visita():
-    data = request.get_json()
-    nombre = data.get('nombre')
-    motivo = data.get('motivo')
-    persona = data.get('persona')
 
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO visitas (nombre, motivo, persona) VALUES (%s, %s, %s)", (nombre, motivo, persona))
-    conn.commit()
-    cur.close()
-    conn.close()
+@app.route('/capture', methods=['GET'])
+def capturar_y_procesar():
+    try:
+        print("📥 Solicitud recibida desde ESP32. Ejecutando controlador de captura...")
 
-    return jsonify({"message": "Visita registrada"}), 200
+        result = subprocess.run(
+            ["python3", "camera/rekognition_capture_controller.py"],  # asegúrate de tener este script en el mismo directorio
+            capture_output=True,
+            text=True
+        )
 
-@app.route('/registro-propietario', methods=['POST'])
-def registro_propietario():
-    data = request.get_json()
-    nombre = data.get('nombre')
-    unidad = data.get('unidad')
+        print("🧠 Resultado del script:")
+        print(result.stdout)
 
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO propietarios (nombre, unidad) VALUES (%s, %s)", (nombre, unidad))
-    conn.commit()
-    cur.close()
-    conn.close()
+        if result.returncode == 0:
+            return jsonify({"status": "ok", "output": result.stdout}), 200
+        else:
+            return jsonify({"status": "error", "output": result.stderr}), 500
 
-    return jsonify({"message": "Propietario registrado"}), 200
+    except Exception as e:
+        print("⚠️ Error ejecutando script:", e)
+        return jsonify({"status": "exception", "message": str(e)}), 500
+
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000)
