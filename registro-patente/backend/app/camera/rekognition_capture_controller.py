@@ -1,6 +1,7 @@
 import requests
 import psycopg2
 import boto3
+import paho.mqtt.publish as publish
 from datetime import datetime
 import json
 
@@ -11,7 +12,7 @@ ESP32_CAM_URL = "http://192.168.0.68/capture"
 DB_CONFIG = {
     "host": "172.31.25.254",
     "user": "postgres",
-    "password": "postgres",  # Agregá tu contraseña si tenés
+    "password": "postgres",
     "dbname": "accesscontrol",
     "port": 5432
 }
@@ -19,14 +20,18 @@ DB_CONFIG = {
 # AWS Rekognition config
 rekognition = boto3.client('rekognition', region_name='us-east-1')
 BUCKET_NAME = 'esp32-captures'
-IMAGE_NAME = 'patente.jpeg'  # Imagen cargada previamente a S3
+IMAGE_NAME = 'patente.jpeg'
+
+# MQTT config
+MQTT_BROKER = "54.243.184.8"  # IP pública o privada del broker MQTT
+MQTT_TOPIC = "barrera/accion"
+
 
 def detectar_patente_rekognition():
     try:
         response = rekognition.detect_text(
             Image={'S3Object': {'Bucket': BUCKET_NAME, 'Name': IMAGE_NAME}}
         )
-        # Filtrar texto tipo LINE con más probabilidad de ser patente
         posibles_lineas = [d for d in response['TextDetections'] if d['Type'] == 'LINE']
         for linea in posibles_lineas:
             texto = linea['DetectedText'].replace(" ", "")
@@ -52,7 +57,6 @@ def capture_and_validate():
 
         print(f"🔠 Patente detectada (rekognition): {patente}")
 
-        # Validación contra la base
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
         cur.execute("SELECT autorizado FROM vehiculos WHERE patente = %s", (patente,))
@@ -62,6 +66,8 @@ def capture_and_validate():
 
         if result and result[0] is True:
             print("✅ Patente autorizada → abrir barrera 🚧")
+            publish.single(MQTT_TOPIC, payload="abrir", hostname=MQTT_BROKER)
+            print("📡 Mensaje MQTT enviado: abrir")
             return True
         else:
             print("🚫 Patente NO autorizada → acceso denegado ❌")
