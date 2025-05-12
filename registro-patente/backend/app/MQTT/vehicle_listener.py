@@ -2,7 +2,7 @@ import paho.mqtt.client as mqtt
 import json
 import time
 
-BROKER = "54.243.184.8"  # ⚠️ Reemplazar con IP real del broker Mosquitto
+BROKER = "54.243.184.8"
 PORT = 1883
 TOPIC = "vehicle/detected"
 
