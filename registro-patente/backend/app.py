@@ -10,7 +10,7 @@ def capturar_y_procesar():
         print("📥 Solicitud recibida desde ESP32. Ejecutando controlador de captura...")
 
         result = subprocess.run(
-            ["python3", "camera/rekognition_capture_controller.py"],  # asegúrate de tener este script en el mismo directorio
+            ["python3", "registro-patente/backend/app/camera/rekognition_capture_controller.py"],  # asegúrate de tener este script en el mismo directorio
             capture_output=True,
             text=True
         )
