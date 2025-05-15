@@ -6,27 +6,26 @@ import os
 
 # === CONFIGURACIÓN ===
 
-MQTT_BROKER = "172.31.83.70"  # IP privada de la instancia MQTT (desde EC2 "prueba")
+MQTT_BROKER = "54.243.184.8"  # Usar IP pública si corres desde tu PC
 MQTT_PORT = 1883
 MQTT_TOPIC = "patentes/captura"
 
-IMAGE_PATH = "/tmp/captura.jpg"
+IMAGE_PATH = "/tmp/captura.jpg"  # Asegurate de tener permisos si corres en Windows o ajustá el path
 BUCKET_NAME = "esp32-captures"
-S3_IMAGE_KEY = "captura.jpg"
 
 rekognition = boto3.client("rekognition", region_name="us-east-1")
 s3 = boto3.client("s3")
 
 # === LÓGICA PRINCIPAL ===
 
-def subir_imagen_a_s3():
+def subir_imagen_a_s3(s3_image_key):
     try:
         if not os.path.exists(IMAGE_PATH):
             print("❌ No se encontró la imagen:", IMAGE_PATH)
             return False
 
-        print("☁️ Subiendo imagen a S3...")
-        s3.upload_file(IMAGE_PATH, BUCKET_NAME, S3_IMAGE_KEY)
+        print("☁️ Subiendo imagen a S3 como", s3_image_key)
+        s3.upload_file(IMAGE_PATH, BUCKET_NAME, s3_image_key)
         print("✅ Imagen subida a S3")
         return True
 
@@ -34,10 +33,10 @@ def subir_imagen_a_s3():
         print("⚠️ Error subiendo a S3:", e)
         return False
 
-def detectar_patente_rekognition():
+def detectar_patente_rekognition(s3_image_key):
     try:
         response = rekognition.detect_text(
-            Image={'S3Object': {'Bucket': BUCKET_NAME, 'Name': S3_IMAGE_KEY}}
+            Image={'S3Object': {'Bucket': BUCKET_NAME, 'Name': s3_image_key}}
         )
         posibles_lineas = [d for d in response['TextDetections'] if d['Type'] == 'LINE']
         for linea in posibles_lineas:
@@ -66,8 +65,16 @@ def on_message(client, userdata, msg):
             f.write(image_data)
         print(f"💾 Imagen guardada como {IMAGE_PATH}")
 
-        if subir_imagen_a_s3():
-            patente = detectar_patente_rekognition()
+        # Guardar copia local con timestamp para debug
+        filename = f"captura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        with open(filename, "wb") as f:
+            f.write(image_data)
+        print(f"🗂️ Imagen también guardada como {filename}")
+
+        s3_image_key = filename
+
+        if subir_imagen_a_s3(s3_image_key):
+            patente = detectar_patente_rekognition(s3_image_key)
             if patente:
                 print(f"🔠 Patente detectada: {patente}")
             else:
