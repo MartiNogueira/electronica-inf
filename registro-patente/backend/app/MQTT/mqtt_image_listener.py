@@ -1,94 +1,112 @@
 import base64
 import boto3
+import psycopg2
 import paho.mqtt.client as mqtt
 from datetime import datetime
 import os
+import re
 
-# === CONFIGURACIÓN ===
-
-MQTT_BROKER = "54.243.184.8"  # Usar IP pública si corres desde tu PC
+# === CONFIGURACIÓN GENERAL ===
+MQTT_BROKER = "54.243.184.8"
 MQTT_PORT = 1883
-MQTT_TOPIC = "patentes/captura"
-
-IMAGE_PATH = "/tmp/captura.jpg"  # Asegurate de tener permisos si corres en Windows o ajustá el path
+MQTT_TOPIC_SUB = "patentes/captura"
+MQTT_TOPIC_PUB = "acceso/autorizado"
+IMAGE_PATH = os.path.join(os.getcwd(), "captura.jpg")
 BUCKET_NAME = "esp32-captures"
 
+# === CONFIGURACIÓN POSTGRES ===
+DB_HOST = "172.31.25.254"   # ← IP PRIVADA de accesscontrol
+DB_NAME = "accesscontrol"
+DB_USER = "postgres"
+DB_PASS = "postgres"
+DB_PORT = 5432
+
+# === AWS CONFIG ===
 rekognition = boto3.client("rekognition", region_name="us-east-1")
 s3 = boto3.client("s3")
 
-# === LÓGICA PRINCIPAL ===
+# === MQTT ===
+client = mqtt.Client()
 
-def subir_imagen_a_s3(s3_image_key):
+def guardar_imagen(payload):
     try:
-        if not os.path.exists(IMAGE_PATH):
-            print("❌ No se encontró la imagen:", IMAGE_PATH)
-            return False
-
-        print("☁️ Subiendo imagen a S3 como", s3_image_key)
-        s3.upload_file(IMAGE_PATH, BUCKET_NAME, s3_image_key)
-        print("✅ Imagen subida a S3")
+        with open(IMAGE_PATH, "wb") as f:
+            f.write(base64.b64decode(payload))
+        print(f"✅ Imagen guardada en {IMAGE_PATH}")
         return True
-
     except Exception as e:
-        print("⚠️ Error subiendo a S3:", e)
+        print("❌ Error guardando imagen:", e)
         return False
 
-def detectar_patente_rekognition(s3_image_key):
+def subir_imagen_a_s3(s3_key):
     try:
-        response = rekognition.detect_text(
-            Image={'S3Object': {'Bucket': BUCKET_NAME, 'Name': s3_image_key}}
-        )
-        posibles_lineas = [d for d in response['TextDetections'] if d['Type'] == 'LINE']
-        for linea in posibles_lineas:
-            texto = linea['DetectedText'].replace(" ", "")
-            if 6 <= len(texto) <= 8 and any(c.isdigit() for c in texto):
-                return texto
-        return None
+        s3.upload_file(IMAGE_PATH, BUCKET_NAME, s3_key)
+        print(f"☁️ Imagen subida a S3 como {s3_key}")
+        return s3_key
     except Exception as e:
-        print("⚠️ Error en Rekognition:", e)
+        print("❌ Error subiendo a S3:", e)
         return None
 
-# === CALLBACKS MQTT ===
+def filtrar_patente(textos):
+    patron = re.compile(r'[A-Z]{2}\d{3}[A-Z]{2}')
+    for texto in textos:
+        if texto["Type"] == "LINE":
+            t = texto["DetectedText"].replace(" ", "").upper()
+            if patron.match(t):
+                print("✅ Patente detectada:", t)
+                return t
+    return "NO_DETECTADA"
 
-def on_connect(client, userdata, flags, rc):
-    if rc == 0:
-        print("✅ Conectado a MQTT broker")
-        client.subscribe(MQTT_TOPIC)
-    else:
-        print("❌ Error de conexión MQTT. Código:", rc)
+def detectar_patente_con_rekognition(s3_key):
+    try:
+        response = rekognition.detect_text(Image={"S3Object": {"Bucket": BUCKET_NAME, "Name": s3_key}})
+        textos = response["TextDetections"]
+        return filtrar_patente(textos)
+    except Exception as e:
+        print("❌ Error con Rekognition:", e)
+        return "NO_DETECTADA"
+
+def verificar_autorizacion(patente):
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT autorizado FROM vehiculos WHERE patente = %s", (patente,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row[0] == True:
+            print("✅ Patente autorizada")
+            return "true"
+        else:
+            print("⛔ Patente no autorizada")
+            return "false"
+    except Exception as e:
+        print("❌ Error al conectar con PostgreSQL:", e)
+        return "false"
 
 def on_message(client, userdata, msg):
-    print(f"\n📥 Imagen recibida en {msg.topic}")
-    try:
-        image_data = base64.b64decode(msg.payload)
-        with open(IMAGE_PATH, "wb") as f:
-            f.write(image_data)
-        print(f"💾 Imagen guardada como {IMAGE_PATH}")
+    print("📥 Imagen recibida por MQTT")
 
-        # Guardar copia local con timestamp para debug
-        filename = f"captura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        with open(filename, "wb") as f:
-            f.write(image_data)
-        print(f"🗂️ Imagen también guardada como {filename}")
+    if guardar_imagen(msg.payload):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        s3_key = f"capturas/{timestamp}.jpg"
+        subir_imagen_a_s3(s3_key)
 
-        s3_image_key = filename
+        patente = detectar_patente_con_rekognition(s3_key)
+        resultado = "false" if patente == "NO_DETECTADA" else verificar_autorizacion(patente)
 
-        if subir_imagen_a_s3(s3_image_key):
-            patente = detectar_patente_rekognition(s3_image_key)
-            if patente:
-                print(f"🔠 Patente detectada: {patente}")
-            else:
-                print("🚫 No se detectó ninguna patente")
+        print("📡 Publicando resultado:", resultado)
+        client.publish(MQTT_TOPIC_PUB, resultado)
 
-    except Exception as e:
-        print("❌ Error procesando imagen:", e)
-
-# === INICIALIZACIÓN MQTT ===
-
-client = mqtt.Client()
-client.on_connect = on_connect
+# === INICIO ===
 client.on_message = on_message
-
-print("🔌 Conectando a MQTT...")
-client.connect(MQTT_BROKER, MQTT_PORT, 60)
+client.connect(MQTT_BROKER, MQTT_PORT)
+client.subscribe(MQTT_TOPIC_SUB)
+print("🚀 Escuchando en", MQTT_TOPIC_SUB)
 client.loop_forever()
